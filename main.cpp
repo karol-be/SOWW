@@ -37,7 +37,7 @@ double trapesoid_area_under_sin(double rangeStart, double rangeStop, double samp
 
 int main(int argc, char **argv)
 {
-  double precision = 1000 * 1000;
+  double precision = 1000 * 1000 * 50;
   int myRank, procCount;
   double rectArea, trapArea, sinAreaFinal, trapAreaFinal;
   double globalRangeStart = -2 * M_PI;
@@ -60,8 +60,8 @@ int main(int argc, char **argv)
   double processRangeStart = globalRangeStart + myRank * processRangeSize;
   double processRangeStop = processRangeStart + processRangeSize;
 
-  rectArea = rect_area_under_sin(processRangeStart, processRangeStop, precision);
-  trapArea = trapesoid_area_under_sin(processRangeStart, processRangeStop, precision);
+  rectArea = rect_area_under_sin(processRangeStart, processRangeStop, precision / procCount);
+  trapArea = trapesoid_area_under_sin(processRangeStart, processRangeStop, precision / procCount);
 
   MPI_Reduce(&rectArea, &sinAreaFinal, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
   MPI_Reduce(&trapArea, &trapAreaFinal, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
