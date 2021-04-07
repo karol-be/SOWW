@@ -49,14 +49,13 @@ bool hasSufficientRangeCount(int rangeStart, int rangeStop, int procCount)
 #define START -100
 #define STOP 100
 
-bool SendNextChunkToTarget(int target)
+bool SendNextChunkToTarget(int target, double* currentRangeStart)
 {
     static const double step = 1;
-    static double currentRangeStart = START;
 
     double range[2];
-    range[0] = currentRangeStart;
-    range[1] = currentRangeStart + step;
+    range[0] = *currentRangeStart;
+    range[1] = *currentRangeStart + step;
 
 #ifdef DEBUG
     printf("\nMaster sending range %f,%f to process %d", range[0], range[1], target);
@@ -64,9 +63,12 @@ bool SendNextChunkToTarget(int target)
 #endif
     // send it to process i
     MPI_Send(range, 2, MPI_DOUBLE, target, DATA, MPI_COMM_WORLD);
-    currentRangeStart += step;
-    return currentRangeStart < STOP;
+    *currentRangeStart += step;
+    return *currentRangeStart < STOP;
 }
+
+bool SendNextChunkAsync(int target, double* currentRangeStart, double* results)
+
 
 void ReceiveFromAnyProcess(double *resultStore, MPI_Status *status)
 {
@@ -85,20 +87,63 @@ void KillAllSlaves(int procCount)
     }
 }
 
+MPI_Request* GetRequests(int count)
+{
+    // Why is this 3 * procCount? is the the amount of requests per one slave?
+    MPI_Request *requests = (MPI_Request *)malloc(count * sizeof(MPI_Request));
+    if (!requests)
+    {
+        printf("Not enough memory");
+        MPI_Finalize();
+        return;
+    }
+    return requests;
+}
+
+double* GetDoubleArr(int count)
+{
+    double* ranges = (double *)malloc(count * sizeof(double));
+    if (!ranges)
+    {
+        printf("\nNot enough memory");
+        MPI_Finalize();
+        return -1;
+    }
+    return ranges;
+}
+
 void HandleMaster(int procCount)
 {
     MPI_Status status;
     double resultTemp, result = 0;
     int procNum;
-
-    for (procNum = 1; procNum < procCount; procNum++)
-    {
-        SendNextChunkToTarget(procNum);
-    }
+    MPI_Request *requests = GetRequests(3 * ( procCount - 1 ));
+    double* ranges = GetDoubleArr(4 * (procCount - 1));
+    double* results = GetDoubleArr(procCount - 1);
+    int sentCount = 0, receivedCount = 0;
 
     bool isAnythingLeftToSend = true;
+    for (procNum = 1; procNum < procCount; procNum++)
+    {
+        if(!SendNextChunkToTarget(procNum))
+        {
+            isAnythingLeftToSend = false;
+            break;
+        }
+        sentCount += 1;
+    }
+
+    for (int i = 0; i < 2 * (procCount - 1); i++)
+            requests[i] = MPI_REQUEST_NULL; // none active at this point
+    
+
+    // start receiving for results from the slaves
+    for (int i = 1; i < procCount; i++)
+        MPI_Irecv(&(results[i - 1]), 1, MPI_DOUBLE, i, RESULT, MPI_COMM_WORLD, &(requests[i - 1]));
+
     do
     {
+        
         MPI_Recv(&resultTemp, 1, MPI_DOUBLE, MPI_ANY_SOURCE, RESULT, MPI_COMM_WORLD, &status);
         ReceiveFromAnyProcess(&resultTemp, &status);
         result += resultTemp;
@@ -125,9 +170,9 @@ void HandleSlave(int rank)
     {
         MPI_Probe(0, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
 
-        #ifdef DEBUG
+#ifdef DEBUG
         printf("Slave no: %d probes for data", rank);
-        #endif
+#endif
 
         if (status.MPI_TAG == DATA)
         {
@@ -135,8 +180,7 @@ void HandleSlave(int rank)
             resultTemp = SimpleIntegration(range[0], range[1]);
             MPI_Send(&resultTemp, 1, MPI_DOUBLE, 0, RESULT, MPI_COMM_WORLD);
         }
-    }
-    while (status.MPI_TAG != FINISH) ;
+    } while (status.MPI_TAG != FINISH);
 }
 
 int main(int argc, char **argv)
